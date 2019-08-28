@@ -5,7 +5,7 @@
 
 Client::Client(std::string & address, uint16_t port) :
 	ep(address::from_string(address), port),
-	sock(service),
+	socket(new tcp::socket(service)),
 	buff(5),
 	runningFlag(true)
 {
@@ -17,32 +17,38 @@ Client::~Client() {
 }
 
 void Client::send(uint8_t *data, size_t blockSize) {
-	sock.send(boost::asio::buffer(data, blockSize));
+	socket->send(boost::asio::buffer(data, blockSize));
 }
 
 
 void Client::connect() {
-	sock.connect(ep);
+	socket->connect(ep);
 }
 
 void Client::makeCall(uint16_t port) {
-	sock.send(boost::asio::buffer("call " + std::to_string(port)));
+	socket->send(boost::asio::buffer("call " + std::to_string(port)));
 }
 
 void Client::setServerReady() {
-	sock.send(boost::asio::buffer("ready"));
+	socket->send(boost::asio::buffer("ready"));
 }
 
 void Client::waitForResponse() {
 	boost::asio::streambuf b;
-	boost::asio::read_until(sock, b, "ok!");
+	boost::asio::read_until(*socket, b, "ok!");
 }
 void Client::endCall() {
-	sock.send(boost::asio::buffer("end"));
+	disableRunningFlag();
+	if (socket->is_open())
+		socket->send(boost::asio::buffer("end"));
 }
 
 bool Client::getRunningFlag() const {
 	return runningFlag;
+}
+
+bool Client::isCallRejected() const {
+	return !socket->is_open();
 }
 
 void Client::disableRunningFlag() {
@@ -75,6 +81,9 @@ void Client::run() {
 
 		buff.read(block);
 		
+		if (!runningFlag)
+			break;
+
 		muLawEncode(block.data, encodedBuffer, block.blockSize);
 		send(encodedBuffer, block.blockSize);
 		waitForResponse();
@@ -86,6 +95,15 @@ void Client::run() {
 	terminateAudio(err);
 
 	delete[] encodedBuffer;
+}
+
+bool Client::try_close() {
+	if (socket->is_open()) {
+		socket->close();
+		socket.reset(new tcp::socket(service));  
+		return true;
+	}
+	return false;
 }
 
 void Client::record(PaStream *stream, PaStreamParameters &inputParameters, PaError &err) {
@@ -136,8 +154,9 @@ void Client::record(PaStream *stream, PaStreamParameters &inputParameters, PaErr
 
 	}
 
+	buff.write(block); // Prevent deadlock in Client::run() thread
+
 	lock.lock();
 	err = Pa_CloseStream(stream);
 	lock.unlock();
-	if (err != paNoError) return;
 }

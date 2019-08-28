@@ -16,7 +16,7 @@ private:
 	mutable std::mutex mut;
 	boost::asio::io_service service;
 	tcp::acceptor acceptor;
-	tcp::socket socket;
+	std::unique_ptr<tcp::socket> socket;
 	ThreadSafeCircleBuffer<AudioBlock> buff;
 
 	static boost::asio::ip::address getIP();

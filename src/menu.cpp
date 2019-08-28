@@ -1,5 +1,6 @@
 #include <iostream>
 #include <thread>
+#include <conio.h>
 
 #include "menu.h"
 #include "server.h"
@@ -7,6 +8,10 @@
 
 
 enum Options { CALL = 1, TEST, EXIT };
+
+enum State { MENU, ACCEPT, DECLINE };
+
+State state = State::MENU;
 
 std::istream& operator >> (std::istream& is, Options& op) {
 	char c;
@@ -34,49 +39,66 @@ std::istream& operator >> (std::istream& is, Options& op) {
 	return is;
 }
 
-void receiveCall(Server & s, char c) {
+void clearInput() {
+	if (std::cin.get() != '\n')
+		std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+}
 
-	// TODO: Add some time check
+void runServerInBackground(Server &s) {
+	std::thread serverThread(&Server::handleConnection, &s);
+	serverThread.detach();
+}
 
-	while (c != '1' && c != '2') {
-		std::cin >> c;
-		if (std::cin.get() != '\n')
-			std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-	}
+void receiveCall(Server & s) {
+	while (true) {
+		while (!s.getIncomingCallFlag())
+			std::this_thread::sleep_for(std::chrono::seconds(2));
 
-	if (c == '1') {
-		std::string address = s.getClientAddress();
-		uint16_t port = s.getClientPort();
+		short timeout = 8;
+		while (state != State::ACCEPT && state != State::DECLINE && timeout-- > 0)
+			std::this_thread::sleep_for(std::chrono::seconds(1));
 
-		Client client(address, port);
-		client.connect();
+		if (state == State::ACCEPT) {
+			std::string address = s.getClientAddress();
+			uint16_t port = s.getClientPort();
 
-		client.setServerReady();
+			Client client(address, port);
+			client.connect();
 
-		std::thread serverThread(&Server::handleCallData, &s); // 2 acceptors
-		std::thread clientThread(&Client::run, &client);
+			client.setServerReady();
 
-		std::cout << "Call started\n"
-			<< "1: End call"
+			std::thread serverThread(&Server::handleCallData, &s);
+			std::thread clientThread(&Client::run, &client);
+
+			std::cout << "Call started\n"
+				<< "1: End call"
+				<< std::endl;
+			char c;
+			do {
+				std::cin >> c;
+				if (std::cin.get() != '\n')
+					std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+			} while (c != '1');
+
+			client.endCall();
+			s.endCall();
+
+			if (clientThread.joinable())
+				clientThread.join();
+			if (serverThread.joinable())
+				serverThread.join();
+		}
+
+		if (timeout < 0)
+			std::cout << "Time is up\n"
+			<< "Please choose option:\n"
+			<< "1: Call\n" << "2: Test\n" << "3: Exit" 
 			<< std::endl;
 
-		do {
-			std::cin >> c;
-			if (std::cin.get() != '\n')
-				std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-		} while (c != '1');
-
-		client.endCall();
-		// TODO: Check for deadlock, call doesn't end correctly
-		s.endCall();
-
-		if (clientThread.joinable())
-			clientThread.join();
-		if (serverThread.joinable())
-			serverThread.join();
+		state = State::MENU;
+		s.disableIncomingCallFlag();
+		runServerInBackground(s);
 	}
-
-	s.disableIncomingCallFlag();
 }
 
 
@@ -87,19 +109,36 @@ void call(Server & server) {
 	std::string		s, ip;
 	uint16_t		port;
 
-	// TODO: IP and port verification
-
-	std::cin >> s;
-	ip = s.substr(0, s.find(":"));
-	port = std::stoul(s.substr(s.find(":") + 1, s.length() - 1));
+	do {
+		std::cin >> s;
+		try {
+			boost::asio::ip::address::from_string(s.substr(0, s.find(":")));
+			ip = s.substr(0, s.find(":"));
+			port = std::stoul(s.substr(s.find(":") + 1, s.length() - 1));
+			break;
+		}
+		catch (...) {
+			std::cout << "Incorrect input, try again" << std::endl;
+		}
+	} while (true);
 
 	Client client(ip, port);
 	client.connect();
 	client.makeCall(server.getServerPort());
 
-	// TODO: Check for rejected call
-	while (!server.isOtherServerReady())
+	short timeout = 10;
+	while (!server.isOtherServerReady() && timeout-- != 0 && !client.isCallRejected() && state != State::DECLINE)
 		std::this_thread::sleep_for(std::chrono::seconds(1));
+
+	if (timeout == -1) {
+		std::cout << "Call wasn't accepted" << std::endl;
+		return;
+	}
+
+	if (client.isCallRejected() || state == State::DECLINE) {
+		std::cout << "Call was rejected" << std::endl;
+		return;
+	}
 
 	std::thread serverThread(&Server::handleCallData, &server);
 	std::thread clientThread(&Client::run, &client);
@@ -110,12 +149,10 @@ void call(Server & server) {
 	char c;
 	do {
 		std::cin >> c;
-		if (std::cin.get() != '\n')
-			std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+		clearInput();
 	} while (c != '1');
 
 	client.endCall();
-	// TODO: Check for deadlock, call doesn't end correctly
 	server.endCall();
 
 	if (clientThread.joinable())
@@ -134,8 +171,7 @@ void testMicro(Server & server) {
 	char c = '0';
 	while (c != '1' && c != '2' && c != '3') {
 		std::cin >> c;
-		if (std::cin.get() != '\n')
-			std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+		clearInput();
 	}
 	switch (c)
 	{
@@ -151,35 +187,41 @@ void testMicro(Server & server) {
 	}
 }
 
-void runServerInBackground(Server &s) {
-	std::thread serverThread(&Server::handleConnection, &s);
-	serverThread.detach();
+void runReceiveCallInBackground(Server &s) {
+	std::thread receiveCallThread(receiveCall, std::ref(s));
+	receiveCallThread.detach();
 }
 
 void stopServer(Server &s) {
 	s.stop();
 }
 
+
 void mainMenu(Server &s) {
 	runServerInBackground(s);
+	
+	runReceiveCallInBackground(s);
 
 	Options op;
-
 	do
 	{
 		std::cout << "Please choose option:\n"
 			<< "1: Call\n" << "2: Test\n" << "3: Exit"
 			<< std::endl;
 
+		state = State::MENU;
 		std::cin >> op;
 		if (s.getIncomingCallFlag()) {
-			if (op != EXIT)
+			if (op != EXIT) {
 				if (op == CALL) {
-					receiveCall(s, '1');
-					runServerInBackground(s);
+					state = State::ACCEPT;
 				}
 				else
-					receiveCall(s, '2');
+					state = State::DECLINE;
+
+				while (s.getIncomingCallFlag())
+					std::this_thread::sleep_for(std::chrono::seconds(5));
+			}
 		}
 		else
 			switch (op) {
@@ -198,8 +240,8 @@ void mainMenu(Server &s) {
 
 char runType() {
 	std::cout << "Welcome to VoIP-Desktop\n"
-		<< "Do you want start server manual(1) or automatically(2)?\n"
-		<< "In this case you must enter your ip and port where you want the server to start,\n"
+		<< "How do you want to start server manual(1) or automatically(2)?\n"
+		<< "In manual case you must enter your ip and port where you want the server to start.\n"
 		<< "When you start program automatically, you must be connected to the internet."
 		<< std::endl;
 	char c;
@@ -216,18 +258,25 @@ void runManual() {
 	std::cout << "Please input ip and port bellow\n"
 		<< "Example: 192.168.0.1:8080"
 		<< std::endl;
-	std::string		str, ip;
+	std::string		s, ip;
 	uint16_t		port;
 	
-	// TODO: IP and port verification
+	do {
+		std::cin >> s;
+		try {
+			boost::asio::ip::address::from_string(s.substr(0, s.find(":")));
+			ip = s.substr(0, s.find(":"));
+			port = std::stoul(s.substr(s.find(":") + 1, s.length() - 1));
+			break;
+		}
+		catch (...) {
+			std::cout << "Incorrect input, try again" << std::endl;
+		}
+	} while (true);
 
-	std::cin >> str;
-	ip = str.substr(0, str.find(":"));
-	port = std::stoul(str.substr(str.find(":") + 1, str.length() - 1));
+	Server server(ip, port);
 
-	Server s(ip, port);
-
-	mainMenu(s);
+	mainMenu(server);
 
 }
 

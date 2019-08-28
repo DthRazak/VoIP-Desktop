@@ -13,7 +13,7 @@ Server::Server() :
 	backgroundFlag(true),
 	incomingCallFlag(false),
 	otherServerReady(false),
-	socket(service)
+	socket(new tcp::socket(service))
 {
 	std::cout << "Server started on " << serverAddress << ':' << serverPort << std::endl;
 	constructDecoder();
@@ -29,7 +29,7 @@ Server::Server(std::string & address, uint16_t port) :
 	backgroundFlag(true),
 	incomingCallFlag(false),
 	otherServerReady(false),
-	socket(service)
+	socket(new tcp::socket(service))
 {
 	std::cout << "Server started on " << serverAddress << ':' << serverPort << std::endl;
 	constructDecoder();
@@ -87,13 +87,16 @@ std::string Server::getClientAddress() const {
 	return clientAddress;
 }
 
-// Not work correctly
 void Server::stop() {
-	backgroundFlag = false;
+	acceptor.cancel();
 }
 
 void Server::disableIncomingCallFlag() {
 	incomingCallFlag = false;
+	if (socket->is_open()) {
+		socket->close();
+		socket.reset(new tcp::socket(service));
+	}
 }
 
 void Server::disableRunningFlag() {
@@ -105,18 +108,26 @@ void Server::endCall() {
 }
 
 void Server::sendResponse() {
-	socket.send(boost::asio::buffer("ok!"));
+	socket->send(boost::asio::buffer("ok!"));
 }
 
 void Server::handleConnection() {
 	char buffer[16];
 	while (backgroundFlag) {
-		acceptor.accept(socket);
+		boost::system::error_code ec;
+
+		acceptor.accept(*socket, ec);
+		if (ec) return;
+
+		size_t bytes = socket->read_some(boost::asio::buffer(buffer, 16), ec);
 		
-		size_t bytes = socket.read_some(boost::asio::buffer(buffer, 16));
-		
+		if (ec) {
+			socket.reset(new tcp::socket(service));
+			continue;
+		}
+
 		if (std::strncmp(buffer, "call", 4) == 0) {
-			clientAddress = socket.remote_endpoint().address().to_string();
+			clientAddress = socket->remote_endpoint().address().to_string();
 			auto str = std::string(buffer, bytes).substr(5, bytes - 1);
 			clientPort = std::stoul(str);
 			incomingCallFlag = true;
@@ -164,7 +175,7 @@ void Server::handleCallData() {
 
 	while (runningFlag) {
 
-		size_t bytes = socket.read_some(boost::asio::buffer(encodedBuffer, block.blockSize));
+		size_t bytes = socket->read_some(boost::asio::buffer(encodedBuffer, block.blockSize));
 		sendResponse();
 
 		if (bytes < 10 && (std::strncmp((char*)encodedBuffer, "end", 3) == 0)) {
@@ -177,13 +188,21 @@ void Server::handleCallData() {
 		buff.write(block);
 	}
 
+	if (std::strncmp((char*)encodedBuffer, "end", 3) == 0) {
+		std::cout << "Call is ended, press 1 to continue" << std::endl;
+	}
+
+	sendResponse();		// Prevent the client from waiting before call ends
+
 	if (t.joinable())
 		t.join();
 	terminateAudio(err);
 	otherServerReady = false;
+
 	delete[] encodedBuffer;
 
-	socket.close();
+	socket->close();
+	socket.reset(new tcp::socket(service));
 }
 
 void Server::playback(PaStream *stream, PaStreamParameters &outputParameters, PaError &err) {
@@ -213,7 +232,6 @@ void Server::playback(PaStream *stream, PaStreamParameters &outputParameters, Pa
 			err = Pa_StartStream(stream);
 			if (err != paNoError) {
 				disableRunningFlag();
-				//cnt = 5;
 				continue;
 			}
 
@@ -236,5 +254,4 @@ void Server::playback(PaStream *stream, PaStreamParameters &outputParameters, Pa
 	lock.lock();
 	err = Pa_CloseStream(stream);
 	lock.unlock();
-	if (err != paNoError) return;
 }

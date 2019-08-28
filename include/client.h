@@ -12,7 +12,7 @@ class Client
 private:
 	tcp::endpoint ep;
 	boost::asio::io_service service;
-	tcp::socket sock;
+	std::unique_ptr<tcp::socket> socket;
 	std::atomic<bool> runningFlag;
 	mutable std::mutex mut;
 	ThreadSafeCircleBuffer<AudioBlock> buff;;
@@ -33,7 +33,9 @@ public:
 	void setServerReady();
 	void endCall();
 	void run();
+	bool try_close();
 
 	bool getRunningFlag() const;
+	bool isCallRejected() const;
 };
 

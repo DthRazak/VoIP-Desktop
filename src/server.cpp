@@ -1,7 +1,10 @@
+#include <iostream>
+#include <boost/thread.hpp>
+
 #include "server.h"
 #include "mulawdecoder.h"
 #include "mulawencoder.h"
-#include <iostream>
+
 
 
 Server::Server() :
@@ -169,7 +172,7 @@ void Server::handleCallData() {
 		return;
 	}
 
-	std::thread t(&Server::playback, this, stream, std::ref(outputParameters), std::ref(err));
+	boost::thread t(&Server::playback, this, stream, std::ref(outputParameters), std::ref(err));
 
 	uint8_t *encodedBuffer = new uint8_t[block.blockSize];
 

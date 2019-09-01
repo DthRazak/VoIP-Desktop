@@ -1,4 +1,5 @@
 #include <iostream>
+#include <boost/thread.hpp>
 
 #include "server.h"
 #include "mulawdecoder.h"
@@ -135,7 +136,7 @@ void Server::concurrentTest() {
 		return;
 	}
 
-	std::thread t1(testRecord, istream, std::ref(inputParameters), std::ref(err));
+	boost::thread t1(testRecord, istream, std::ref(inputParameters), std::ref(err));
 	testPlayback(ostream, outputParameters, err);
 
 	if (t1.joinable())

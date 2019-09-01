@@ -1,4 +1,5 @@
 #include <iostream>
+#include <boost/thread.hpp>
 
 #include "client.h"
 #include "mulawencoder.h"
@@ -72,7 +73,7 @@ void Client::run() {
 		return;
 	}
 
-	std::thread t(&Client::record, this, stream, std::ref(inputParameters), std::ref(err));
+	boost::thread t(&Client::record, this, stream, std::ref(inputParameters), std::ref(err));
 	
 	AudioBlock block;
 	uint8_t * encodedBuffer = new uint8_t[block.blockSize];

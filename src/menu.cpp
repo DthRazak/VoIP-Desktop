@@ -1,6 +1,5 @@
 #include <iostream>
-#include <thread>
-#include <conio.h>
+#include <boost/thread.hpp>
 
 #include "menu.h"
 #include "server.h"
@@ -45,18 +44,18 @@ void clearInput() {
 }
 
 void runServerInBackground(Server &s) {
-	std::thread serverThread(&Server::handleConnection, &s);
+	boost::thread serverThread(&Server::handleConnection, &s);
 	serverThread.detach();
 }
 
 void receiveCall(Server & s) {
 	while (true) {
 		while (!s.getIncomingCallFlag())
-			std::this_thread::sleep_for(std::chrono::seconds(2));
+			boost::this_thread::sleep_for(boost::chrono::seconds(2));
 
 		short timeout = 8;
 		while (state != State::ACCEPT && state != State::DECLINE && timeout-- > 0)
-			std::this_thread::sleep_for(std::chrono::seconds(1));
+			boost::this_thread::sleep_for(boost::chrono::seconds(1));
 
 		if (state == State::ACCEPT) {
 			std::string address = s.getClientAddress();
@@ -67,8 +66,8 @@ void receiveCall(Server & s) {
 
 			client.setServerReady();
 
-			std::thread serverThread(&Server::handleCallData, &s);
-			std::thread clientThread(&Client::run, &client);
+			boost::thread serverThread(&Server::handleCallData, &s);
+			boost::thread clientThread(&Client::run, &client);
 
 			std::cout << "Call started\n"
 				<< "1: End call"
@@ -128,7 +127,7 @@ void call(Server & server) {
 
 	short timeout = 10;
 	while (!server.isOtherServerReady() && timeout-- != 0 && !client.isCallRejected() && state != State::DECLINE)
-		std::this_thread::sleep_for(std::chrono::seconds(1));
+		boost::this_thread::sleep_for(boost::chrono::seconds(1));
 
 	if (timeout == -1) {
 		std::cout << "Call wasn't accepted" << std::endl;
@@ -140,8 +139,8 @@ void call(Server & server) {
 		return;
 	}
 
-	std::thread serverThread(&Server::handleCallData, &server);
-	std::thread clientThread(&Client::run, &client);
+	boost::thread serverThread(&Server::handleCallData, &server);
+	boost::thread clientThread(&Client::run, &client);
 
 	std::cout << "Call started\n"
 		<< "1: End call"
@@ -188,7 +187,7 @@ void testMicro(Server & server) {
 }
 
 void runReceiveCallInBackground(Server &s) {
-	std::thread receiveCallThread(receiveCall, std::ref(s));
+	boost::thread receiveCallThread(receiveCall, std::ref(s));
 	receiveCallThread.detach();
 }
 
@@ -220,7 +219,7 @@ void mainMenu(Server &s) {
 					state = State::DECLINE;
 
 				while (s.getIncomingCallFlag())
-					std::this_thread::sleep_for(std::chrono::seconds(5));
+					boost::this_thread::sleep_for(boost::chrono::seconds(5));
 			}
 		}
 		else
